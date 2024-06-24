@@ -1,0 +1,843 @@
+const Alexa = require('ask-sdk-core');
+const AWS = require('aws-sdk');
+const IotData = new AWS.IotData({ endpoint: 'a29cg1x4fjkk3s-ats.iot.us-east-2.amazonaws.com' });
+const DynamoDB = new AWS.DynamoDB.DocumentClient();
+const docClient = new AWS.DynamoDB.DocumentClient();
+
+
+let objectName = '';
+let userId = '';
+
+// Define DynamoDB table name
+const tableName = 'usuariosObjetos';
+
+// Function to save object name in DynamoDB
+async function saveObjectName() {
+    const params = {
+        TableName: tableName,
+        Key: { userId: userId },
+        UpdateExpression: 'ADD objectName :obj',
+        ExpressionAttributeValues: { ':obj': DynamoDB.createSet([objectName]) }
+    };
+    return DynamoDB.update(params).promise();
+}
+
+// Function to get object names from DynamoDB
+async function getObjectNames() {
+    const params = {
+        TableName: tableName,
+        Key: { userId: userId }
+    };
+    return DynamoDB.get(params).promise();
+}
+
+function getShadowParams() {
+    const Shadow = {
+        thingName: objectName,
+    };
+    return Shadow;
+}
+
+function getShadowPromise(params) {
+    return new Promise((resolve, reject) => {
+        IotData.getThingShadow(params, (err, data) => {
+            if (err) {
+                console.log(err, err.stack);
+                reject(`Failed to get thing shadow ${err.errorMessage}`);
+            } else {
+                resolve(JSON.parse(data.payload));
+            }
+        });
+    });
+}
+
+// Ejemplo de la función `getUserData` que podría estar definida en otro archivo
+async function getUserData(userId) {
+    const params = {
+        TableName: tableName,
+        Key: {
+            'userId': userId
+        }
+    };
+    try {
+        const data = await docClient.get(params).promise();
+        return data;
+    } catch (error) {
+        throw new Error(`Unable to get user data: ${error}`);
+    }
+}
+
+// Función `updateUserObjects` que actualiza la lista de objetos del usuario en la base de datos
+async function updateUserObjects(userId, objects) {
+    const params = {
+        TableName: tableName, // Reemplaza con el nombre de tu tabla en DynamoDB
+        Key: {
+            'userId': userId
+        },
+        UpdateExpression: 'set objects = :o',
+        ExpressionAttributeValues: {
+            ':o': objects
+        }
+    };
+    try {
+        await docClient.update(params).promise();
+    } catch (error) {
+        throw new Error(`Unable to update user objects: ${error}`);
+    }
+}
+
+// Función `setHumidity` que setea la humedad en un campo llamado humedadBajaConfigurada en el desired del shadow de AWS IoT
+async function setHumidity(objectName, humidityValue) {
+    const params = {
+        topic: `$aws/things/${objectName}/shadow/update`,
+        payload: JSON.stringify({
+            state: {
+                desired: {
+                    humedadBajaConfigurada: parseInt(humidityValue, 10) // Asegúrate de convertir el valor a entero
+                }
+            }
+        })
+    };
+
+    try {
+        await IotData.publish(params).promise();
+    } catch (error) {
+        throw new Error(`Can't change low humidity: ${error}`);
+    }
+}
+
+// Función `getLowHumidityState` que consulta el estado de la humedad baja configurada desde AWS IoT
+async function getLowHumidityState(objectName) {
+    const params = {
+        thingName: objectName
+    };
+    try {
+        const data = await IotData.getThingShadow(params).promise();
+        const payload = JSON.parse(data.payload);
+        return payload.state.reported.humedadBajaConfigurada; 
+    } catch (error) {
+        throw new Error(`Unable to get low humidity state: ${error}`);
+    }
+}
+
+// Función `getTankState` que consulta el estado del tanque desde AWS IoT
+async function getTankState(objectName) {
+    const params = {
+        thingName: objectName
+    };
+    try {
+        const data = await IotData.getThingShadow(params).promise();
+        const payload = JSON.parse(data.payload);
+        return payload.state.reported.tanque; // Asegúrate de que esta ruta coincide con tu payload
+    } catch (error) {
+        throw new Error(`Unable to get tank state: ${error}`);
+    }
+}
+
+// Función `getObjectState` que consulta el estado del objeto desde AWS IoT
+async function getGroundState(objectName) {
+    const params = {
+        thingName: objectName
+    };
+    try {
+        const data = await IotData.getThingShadow(params).promise();
+        const payload = JSON.parse(data.payload);
+        return payload.state.reported.tierra; // Asegúrate de que esta ruta coincide con tu payload
+    } catch (error) {
+        throw new Error(`Unable to get object state: ${error}`);
+    }
+}
+
+// Función `getObjectState` que consulta el estado del objeto desde AWS IoT
+async function getPumpState(objectName) {
+    const params = {
+        thingName: objectName
+    };
+    try {
+        const data = await IotData.getThingShadow(params).promise();
+        const payload = JSON.parse(data.payload);
+        return payload.state.reported.estadoBomba; // Asegúrate de que esta ruta coincide con tu payload
+    } catch (error) {
+        throw new Error(`Unable to get object state: ${error}`);
+    }
+}
+
+// Función `activateWaterPump` que publica un mensaje en el tópico para activar la bomba de agua
+async function activateWaterPump(objectName) {
+    const params = {
+        topic: `$aws/things/${objectName}/shadow/update`, // Reemplaza con tu tópico
+        payload: JSON.stringify({
+            state: {
+                desired: {
+                    builtInWaterPump: 1
+                }
+            }
+        })
+    };
+    try {
+        await IotData.publish(params).promise();
+    } catch (error) {
+        throw new Error(`Unable to activate water pump: ${error}`);
+    }
+}
+
+// Función `activateWaterPump` que publica un mensaje en el tópico para desactivar la bomba de agua
+async function desactivateWaterPump(objectName) {
+    const params = {
+        topic: `$aws/things/${objectName}/shadow/update`, // Reemplaza con tu tópico
+        payload: JSON.stringify({
+            state: {
+                desired: {
+                    builtInWaterPump: 0
+                }
+            }
+        })
+    };
+    try {
+        await IotData.publish(params).promise();
+    } catch (error) {
+        throw new Error(`Unable to desactivate water pump: ${error}`);
+    }
+}
+
+// Función `setHumidity` que setea el modo en el que funcionara el objeto
+async function setModeSystem(objectName, mode) {
+    const params = {
+        topic: `$aws/things/${objectName}/shadow/update`,
+        payload: JSON.stringify({
+            state: {
+                desired: {
+                    modo: mode // Asegúrate de convertir el valor a entero
+                }
+            }
+        })
+    };
+
+    try {
+        await IotData.publish(params).promise();
+    } catch (error) {
+        throw new Error(`Can't change mode system: ${error}`);
+    }
+}
+
+// Función `getLowHumidityState` que consulta el estado de la humedad baja configurada desde AWS IoT
+async function getModeSystem(objectName) {
+    const params = {
+        thingName: objectName
+    };
+    try {
+        const data = await IotData.getThingShadow(params).promise();
+        const payload = JSON.parse(data.payload);
+        return payload.state.reported.modo; 
+    } catch (error) {
+        throw new Error(`Unable to get mode system: ${error}`);
+    }
+}
+
+// Función `getObjectState` que consulta el estado del objeto desde AWS IoT
+async function getObjectState(objectName) {
+    const params = {
+        thingName: objectName
+    };
+    try {
+        const data = await IotData.getThingShadow(params).promise();
+        const payload = JSON.parse(data.payload);
+        return payload.state.reported; // Asegúrate de que esta ruta coincide con tu payload
+    } catch (error) {
+        throw new Error(`Unable to get object state: ${error}`);
+    }
+}
+
+// -----------------------------------------------------------------------------------------------------------------------------
+
+const LaunchRequestHandler = {
+    canHandle(handlerInput) {
+        return Alexa.getRequestType(handlerInput.requestEnvelope) === 'LaunchRequest';
+    },
+    async handle(handlerInput) {
+        const userId = handlerInput.requestEnvelope.session.user.userId;
+        let speakOutput;
+
+        try {
+            // Supongamos que `getUserData` es una función que obtiene los datos del usuario desde la base de datos
+            const userData = await getUserData(userId);
+
+            if (userData && userData.Item) {
+                // Usuario encontrado en la base de datos
+                speakOutput = `Bienvenido nuevamente a tu aplicación de riego. ¿Qué deseas hacer?`;
+            } else {
+                // Usuario no encontrado en la base de datos
+                speakOutput = `Parece que eres nuevo aquí, debes agregar un objeto. Para agregar un objeto di: "registrar mi nuevo objeto" seguido del nombre de tu objeto. Recuerda que también puedes pedir ayuda.`;
+            }
+        } catch (err) {
+            console.log(`Error retrieving user data: ${err}`);
+            speakOutput = `Hubo un error al verificar tus datos. Por favor, intenta nuevamente más tarde.`;
+        }
+
+        return handlerInput.responseBuilder
+            .speak(speakOutput)
+            .reprompt(speakOutput)
+            .getResponse();
+    }
+};
+
+const AddObjectIntentHandler = {
+    canHandle(handlerInput) {
+        return Alexa.getRequestType(handlerInput.requestEnvelope) === 'IntentRequest'
+            && Alexa.getIntentName(handlerInput.requestEnvelope) === 'AddObjectIntent'; // Reemplaza con el nombre de tu intent
+    },
+    async handle(handlerInput) {
+        const userId = handlerInput.requestEnvelope.session.user.userId;
+        const objectName = Alexa.getSlotValue(handlerInput.requestEnvelope, 'ObjectName'); // Asegúrate de tener un slot llamado 'ObjectName'
+        let speakOutput;
+
+        try {
+            // Obtén los datos del usuario
+            const userData = await getUserData(userId);
+
+            if (userData && userData.Item && userData.Item.objects) {
+                // Verifica si el objeto ya existe
+                if (userData.Item.objects.includes(objectName)) {
+                    speakOutput = `Ya tienes el objeto ${objectName} creado, úsalo o crea uno nuevo.`;
+                } else {
+                    // Agrega el nuevo objeto a la lista
+                    userData.Item.objects.push(objectName);
+                    await updateUserObjects(userId, userData.Item.objects);
+                    speakOutput = `El nuevo objeto ${objectName} se ha creado. Para usarlo ahora puedes usar ese objeto. Pide ayuda para más información.`;
+                }
+            } else {
+                // Si el usuario no tiene objetos, crea una nueva lista con el objeto
+                const newObjectsList = [objectName];
+                await updateUserObjects(userId, newObjectsList);
+                speakOutput = `El nuevo objeto ${objectName} se ha creado. Para usarlo ahora puedes usar ese objeto. Pide ayuda para más información.`;
+            }
+        } catch (err) {
+            console.log(`Error adding object: ${err}`);
+            speakOutput = `Hubo un error al agregar tu objeto. Por favor, intenta nuevamente más tarde.`;
+        }
+
+        return handlerInput.responseBuilder
+            .speak(speakOutput)
+            .reprompt(speakOutput)
+            .getResponse();
+    }
+};
+
+const ListObjectsIntentHandler = {
+    canHandle(handlerInput) {
+        return Alexa.getRequestType(handlerInput.requestEnvelope) === 'IntentRequest'
+            && Alexa.getIntentName(handlerInput.requestEnvelope) === 'ListObjectsIntent';
+    },
+    async handle(handlerInput) {
+        const userId = handlerInput.requestEnvelope.session.user.userId;
+        let speakOutput;
+
+        try {
+            // Obtén los datos del usuario
+            const userData = await getUserData(userId);
+
+            if (userData && userData.Item && userData.Item.objects) {
+                const objectsList = userData.Item.objects;
+
+                if (objectsList.length > 0) {
+                    speakOutput = `Tienes los siguientes objetos: ${objectsList.join(', ')}.`;
+                } else {
+                    speakOutput = `No tienes objetos registrados. Puedes agregar uno diciendo "registrar mi nuevo objeto" seguido del nombre del objeto.`;
+                }
+            } else {
+                speakOutput = `No se encontraron objetos registrados para tu usuario. ¡Pide ayuda!`;
+            }
+        } catch (err) {
+            console.log(`Error handling ListObjectsIntent: ${err}`);
+            speakOutput = `Hubo un error al obtener la lista de tus objetos. Por favor, intenta nuevamente más tarde.`;
+        }
+
+        return handlerInput.responseBuilder
+            .speak(speakOutput)
+            .reprompt(speakOutput)
+            .getResponse();
+    }
+};
+
+const SetearModeIntentHandler = {
+    canHandle(handlerInput) {
+        return Alexa.getRequestType(handlerInput.requestEnvelope) === 'IntentRequest'
+            && Alexa.getIntentName(handlerInput.requestEnvelope) === 'SetearModeIntent'; 
+    },
+    async handle(handlerInput) {
+        const userId = handlerInput.requestEnvelope.session.user.userId;
+        let speakOutput;
+        
+        try {
+            const userData = await getUserData(userId);
+            const objectName = handlerInput.requestEnvelope.request.intent.slots.ObjectName.value;
+            console.log(objectName);
+            const modeValue = handlerInput.requestEnvelope.request.intent.slots.ModeValue.value;
+            console.log(modeValue);
+            
+                
+            if (userData && userData.Item && userData.Item.objects) {
+                
+                if (userData.Item.objects.includes(objectName)) {
+                    
+                    const modeCurrent = await getModeSystem(objectName);
+                    
+                    if(modeValue === modeCurrent){
+                        speakOutput = `Ya estas en el modo ${modeCurrent} del objeto ${objectName}`;
+                    } else if (modeValue !== modeCurrent) {
+                        await setModeSystem(objectName, modeValue);
+                        speakOutput = `Ok, se configuro el modo ${modeValue} para el objeto ${objectName}`;
+                    }  
+                    
+                } else {
+                    speakOutput = `No encontré el objeto ${objectName} en tu lista de objetos. Inténtalo de nuevo o pide que te liste tus objetos registrados diciendo "listar mis objetos".`;
+                }
+            } else {
+                 speakOutput = `No se encontraron objetos registrados para tu usuario. ¡Pide ayuda!`;
+            }
+        } catch (err) {
+            console.log(`Error changMode object: ${err}`);
+            speakOutput = `Hubo un error al cambiar el modo de tu objeto. Por favor, intenta nuevamente más tarde.`;
+        }
+        
+        return handlerInput.responseBuilder
+            .speak(speakOutput)
+            .reprompt(speakOutput)
+            .getResponse();
+    }
+};
+
+const SetearHumidityIntentHandler = {
+    canHandle(handlerInput) {
+        return Alexa.getRequestType(handlerInput.requestEnvelope) === 'IntentRequest'
+            && Alexa.getIntentName(handlerInput.requestEnvelope) === 'SetearHumidityIntent'; // Reemplaza con el nombre de tu intent
+    },
+    async handle(handlerInput) {
+        const userId = handlerInput.requestEnvelope.session.user.userId;
+        const objectName = Alexa.getSlotValue(handlerInput.requestEnvelope, 'ObjectName'); // Asegúrate de tener un slot llamado 'ObjectName'
+        let speakOutput;
+
+        try {
+            // Obtén los datos del usuario
+            const userData = await getUserData(userId);
+            const objectName = handlerInput.requestEnvelope.request.intent.slots.ObjectName.value;
+            const humidityValue = handlerInput.requestEnvelope.request.intent.slots.HumidityValue.value;
+
+            if (userData && userData.Item && userData.Item.objects) {
+                // Verifica si el objeto existe en la lista de objetos del usuario
+                if (userData.Item.objects.includes(objectName)) {
+                    let modeCurrent = await getModeSystem(objectName);
+                    if(modeCurrent === "manual"){
+                        await setHumidity(objectName, humidityValue);
+                        speakOutput = `Se configuró la humedad baja en ${humidityValue} porciento para el objeto ${objectName}.`;
+                    } else {
+                        speakOutput = `El objeto ${objectName} está trabajando en modo ${modeCurrent}, configura el modo a "manual" para setearle una humedad baja con Alexa.`;
+                    }
+                } else {
+                    speakOutput = `No encontré el objeto ${objectName} en tu lista de objetos. Inténtalo de nuevo o pide que te liste tus objetos registrados diciendo "listar mis objetos".`;
+                }
+            } else {
+                speakOutput = `No se encontraron objetos registrados para tu usuario. ¡Pide ayuda!`;
+            }
+        } catch (err) {
+            console.log(`Error handling WaterObjectIntent: ${err}`);
+            speakOutput = `Hubo un error al intentar regar tu objeto. Por favor, intenta nuevamente más tarde.`;
+        }
+
+        return handlerInput.responseBuilder
+            .speak(speakOutput)
+            .reprompt(speakOutput)
+            .getResponse();
+    }
+};
+
+const GetModeSystemIntentHandler = {
+    canHandle(handlerInput) {
+        return Alexa.getRequestType(handlerInput.requestEnvelope) === 'IntentRequest'
+            && Alexa.getIntentName(handlerInput.requestEnvelope) === 'GetModeSystemIntent';
+    },
+    async handle(handlerInput) {
+        const userId = handlerInput.requestEnvelope.session.user.userId;
+        const objectName = Alexa.getSlotValue(handlerInput.requestEnvelope, 'ObjectName'); // Asegúrate de tener un slot llamado 'ObjectName'
+        let speakOutput;
+
+        try {
+            // Obtén los datos del usuario
+            const userData = await getUserData(userId);
+
+            if (userData && userData.Item && userData.Item.objects) {
+                // Verifica si el objeto existe en la lista de objetos del usuario
+                if (userData.Item.objects.includes(objectName)) {
+                    // Obtén el estado de la humedad baja configurada desde AWS IoT
+                    const modeValue = await getModeSystem(objectName);
+
+                    speakOutput = `El objeto ${objectName} esta trabajando en el modo ${modeValue}.`;
+                    
+                } else {
+                    speakOutput = `No encontré el objeto ${objectName} en tu lista de objetos. Inténtalo de nuevo o pide que te liste tus objetos registrados diciendo "listar mis objetos".`;
+                }
+            } else {
+                speakOutput = `No se encontraron objetos registrados para tu usuario. ¡Pide ayuda!`;
+            }
+        } catch (err) {
+            console.log(`Error handling GetModeSystemIntentHandler: ${err}`);
+            speakOutput = `Hubo un error al obtener el modo del sistema configurado para tu objeto. Por favor, intenta nuevamente más tarde.`;
+        }
+
+        return handlerInput.responseBuilder
+            .speak(speakOutput)
+            .reprompt(speakOutput)
+            .getResponse();
+    }
+};
+
+
+const GetLowHumidityStateIntentHandler = {
+    canHandle(handlerInput) {
+        return Alexa.getRequestType(handlerInput.requestEnvelope) === 'IntentRequest'
+            && Alexa.getIntentName(handlerInput.requestEnvelope) === 'GetLowHumidityStateIntent';
+    },
+    async handle(handlerInput) {
+        const userId = handlerInput.requestEnvelope.session.user.userId;
+        const objectName = Alexa.getSlotValue(handlerInput.requestEnvelope, 'ObjectName'); // Asegúrate de tener un slot llamado 'ObjectName'
+        let speakOutput;
+
+        try {
+            // Obtén los datos del usuario
+            const userData = await getUserData(userId);
+
+            if (userData && userData.Item && userData.Item.objects) {
+                // Verifica si el objeto existe en la lista de objetos del usuario
+                if (userData.Item.objects.includes(objectName)) {
+                    // Obtén el estado de la humedad baja configurada desde AWS IoT
+                    const humidityState = await getLowHumidityState(objectName);
+
+                    speakOutput = `La humedad baja configurada para el objeto ${objectName} es ${humidityState} porciento.`;
+                    
+                } else {
+                    speakOutput = `No encontré el objeto ${objectName} en tu lista de objetos. Inténtalo de nuevo o pide que te liste tus objetos registrados diciendo "listar mis objetos".`;
+                }
+            } else {
+                speakOutput = `No se encontraron objetos registrados para tu usuario. ¡Pide ayuda!`;
+            }
+        } catch (err) {
+            console.log(`Error handling GetLowHumidityStateIntent: ${err}`);
+            speakOutput = `Hubo un error al obtener el estado de la humedad baja configurada para tu objeto. Por favor, intenta nuevamente más tarde.`;
+        }
+
+        return handlerInput.responseBuilder
+            .speak(speakOutput)
+            .reprompt(speakOutput)
+            .getResponse();
+    }
+};
+
+const GetTankStateIntentHandler = {
+    canHandle(handlerInput) {
+        return Alexa.getRequestType(handlerInput.requestEnvelope) === 'IntentRequest'
+            && Alexa.getIntentName(handlerInput.requestEnvelope) === 'GetTankStateIntent'; // Reemplaza con el nombre de tu intent
+    },
+    async handle(handlerInput) {
+        const userId = handlerInput.requestEnvelope.session.user.userId;
+        const objectName = Alexa.getSlotValue(handlerInput.requestEnvelope, 'ObjectName'); // Asegúrate de tener un slot llamado 'ObjectName'
+        let speakOutput;
+
+        try {
+            // Obtén los datos del usuario
+            const userData = await getUserData(userId);
+
+            if (userData && userData.Item && userData.Item.objects) {
+                // Verifica si el objeto existe en la lista de objetos del usuario
+                if (userData.Item.objects.includes(objectName)) {
+                    // Obtén el estado del objeto desde AWS IoT
+                    const tanque = await getTankState(objectName);
+
+                    speakOutput = `El estado del tanque del objeto ${objectName} es ${tanque}.`;
+                    
+                } else {
+                    speakOutput = `No encontré el objeto ${objectName} en tu lista de objetos. Inténtalo de nuevo o pide que te liste tus objetos registrados diciendo "listar mis objetos".`;
+                }
+            } else {
+                speakOutput = `No se encontraron objetos registrados para tu usuario. ¡Pide ayuda!`;
+            }
+        } catch (err) {
+            console.log(`Error handling GetTankStateIntent: ${err}`);
+            speakOutput = `Hubo un error al obtener el estado del tanque de tu objeto. Por favor, intenta nuevamente más tarde.`;
+        }
+
+        return handlerInput.responseBuilder
+            .speak(speakOutput)
+            .reprompt(speakOutput)
+            .getResponse();
+    }
+};
+
+const GetSoilStateIntentHandler = {
+    canHandle(handlerInput) {
+        return Alexa.getRequestType(handlerInput.requestEnvelope) === 'IntentRequest'
+            && Alexa.getIntentName(handlerInput.requestEnvelope) === 'GetSoilStateIntent'; // Reemplaza con el nombre de tu intent
+    },
+    async handle(handlerInput) {
+        const userId = handlerInput.requestEnvelope.session.user.userId;
+        const objectName = Alexa.getSlotValue(handlerInput.requestEnvelope, 'ObjectName'); // Asegúrate de tener un slot llamado 'ObjectName'
+        let speakOutput;
+
+        try {
+            // Obtén los datos del usuario
+            const userData = await getUserData(userId);
+
+            if (userData && userData.Item && userData.Item.objects) {
+                // Verifica si el objeto existe en la lista de objetos del usuario
+                if (userData.Item.objects.includes(objectName)) {
+                    // Obtén el estado del objeto desde AWS IoT
+                    const tierra = await getGroundState(objectName);
+
+                    //speakOutput = `El estado de la tierra del objeto ${objectName} es ${tierra}.`;
+                    speakOutput = `La tierra del objeto ${objectName} está ${tierra}.`;
+                } else {
+                    speakOutput = `No encontré el objeto ${objectName} en tu lista de objetos. Inténtalo de nuevo o pide que te liste tus objetos registrados diciendo "listar mis objetos".`;
+                }
+            } else {
+                speakOutput = `No se encontraron objetos registrados para tu usuario. ¡Pide ayuda!`;
+            }
+        } catch (err) {
+            console.log(`Error handling GetSoilStateIntent: ${err}`);
+            speakOutput = `Hubo un error al obtener el estado de la tierra de tu objeto. Por favor, intenta nuevamente más tarde.`;
+        }
+
+        return handlerInput.responseBuilder
+            .speak(speakOutput)
+            .reprompt(speakOutput)
+            .getResponse();
+    }
+};
+
+// Consulta del estado de la bomba
+const PumpStateIntentHandler = {
+    canHandle(handlerInput) {
+        return Alexa.getRequestType(handlerInput.requestEnvelope) === 'IntentRequest'
+            && Alexa.getIntentName(handlerInput.requestEnvelope) === 'PumpStateIntent'; // Reemplaza con el nombre de tu intent
+    },
+    async handle(handlerInput) {
+        const userId = handlerInput.requestEnvelope.session.user.userId;
+        const objectName = Alexa.getSlotValue(handlerInput.requestEnvelope, 'ObjectName'); // Asegúrate de tener un slot llamado 'ObjectName'
+        let speakOutput;
+
+        try {
+            // Obtén los datos del usuario
+            const userData = await getUserData(userId);
+
+            if (userData && userData.Item && userData.Item.objects) {
+                // Verifica si el objeto existe en la lista de objetos del usuario
+                if (userData.Item.objects.includes(objectName)) {
+                    // Obtén el estado del tanque desde el tópico de AWS IoT
+                    const estadoBomba = await getPumpState(objectName);
+                    
+                    speakOutput = `La bomba del objeto ${objectName} esta ${estadoBomba}`;
+                } else {
+                    speakOutput = `No encontré el objeto ${objectName} en tu lista de objetos. Inténtalo de nuevo o pide que te liste tus objetos registrados diciendo "listar mis objetos".`;
+                }
+            } else {
+                speakOutput = `No se encontraron objetos registrados para tu usuario. ¡Pide ayuda!`;
+            }
+        } catch (err) {
+            console.log(`Error handling WaterObjectIntent: ${err}`);
+            speakOutput = `Hubo un error al intentar regar tu objeto. Por favor, intenta nuevamente más tarde.`;
+        }
+
+        return handlerInput.responseBuilder
+            .speak(speakOutput)
+            .reprompt(speakOutput)
+            .getResponse();
+    }
+};
+
+// Encender
+const WaterObjectIntentHandler = {
+    canHandle(handlerInput) {
+        return Alexa.getRequestType(handlerInput.requestEnvelope) === 'IntentRequest'
+            && Alexa.getIntentName(handlerInput.requestEnvelope) === 'WaterObjectIntent'; // Reemplaza con el nombre de tu intent
+    },
+    async handle(handlerInput) {
+        const userId = handlerInput.requestEnvelope.session.user.userId;
+        const objectName = Alexa.getSlotValue(handlerInput.requestEnvelope, 'ObjectName'); // Asegúrate de tener un slot llamado 'ObjectName'
+        let speakOutput;
+
+        try {
+            // Obtén los datos del usuario
+            const userData = await getUserData(userId);
+
+            if (userData && userData.Item && userData.Item.objects) {
+                // Verifica si el objeto existe en la lista de objetos del usuario
+                if (userData.Item.objects.includes(objectName)) {
+                    let modeCurrent = await getModeSystem(objectName);
+                    if(modeCurrent === "manual"){
+                         // Obtén el estado de la bomba desde el tópico de AWS IoT
+                        const estadoBomba = await getPumpState(objectName);
+                        if(estadoBomba !== "encendida"){
+                            const tankState = await getTankState(objectName);
+                            if (tankState !== 'vacio') {
+                                // Publica un mensaje en el tópico para activar la bomba de agua
+                                await activateWaterPump(objectName);
+                                speakOutput = `Se encendió la bomba del objeto ${objectName}.`;
+                            } else {
+                                await activateWaterPump(objectName);
+                                speakOutput = `¡Alerta! El tanque del objeto ${objectName} está vacío, pero se encendió la bomba.`;
+                            }
+                        }
+                        else{
+                            speakOutput = `¡Advertencia! La bomba del objeto ${objectName} ya está encendida.`;
+                        }   
+                    } else {
+                        speakOutput = `El objeto ${objectName} está trabajando en modo ${modeCurrent}, configura el modo a "manual" para encender la bomba por Alexa.`;
+                    }
+                } else {
+                    speakOutput = `No encontré el objeto ${objectName} en tu lista de objetos. Inténtalo de nuevo o pide que te liste tus objetos registrados diciendo "listar mis objetos".`;
+                }
+            } else {
+                speakOutput = `No se encontraron objetos registrados para tu usuario. ¡Pide ayuda!`;
+            }
+        } catch (err) {
+            console.log(`Error handling WaterObjectIntent: ${err}`);
+            speakOutput = `Hubo un error al intentar regar tu objeto. Por favor, intenta nuevamente más tarde.`;
+        }
+
+        return handlerInput.responseBuilder
+            .speak(speakOutput)
+            .reprompt(speakOutput)
+            .getResponse();
+    }
+};
+
+
+const HelpIntentHandler = {
+    canHandle(handlerInput) {
+        return Alexa.getRequestType(handlerInput.requestEnvelope) === 'IntentRequest'
+            && Alexa.getIntentName(handlerInput.requestEnvelope) === 'AMAZON.HelpIntent';
+    },
+    async handle(handlerInput) {
+        const userId = handlerInput.requestEnvelope.session.user.userId;
+        console.log(userId);
+        let speakOutput;
+
+        try {
+            // Verifica si el usuario está registrado en la base de datos
+            const userData = await getUserData(userId);
+
+            if (userData && userData.Item) {
+                // Usuario encontrado en la base de datos
+                speakOutput = `Puedes agregar más objetos diciendo: "registrar mi nuevo objeto". Puedes regar en algún objeto que tengas registrado diciendo "regar con" seguido del nombre de tu objeto. Puedes consultar el estado de la tierra o el tanque de algún objeto diciendo "estado de tierra" de seguido del nombre de tu objeto o "estado de tanque" de seguido del nombre de tu objeto.`;
+            } else {
+                // Usuario no encontrado en la base de datos
+                speakOutput = `Esta es una aplicación de riego. Como eres nuevo, registra un objeto regador diciendo "registrar mi nuevo objeto" seguido del nombre que quieras ponerle a tu objeto. Una vez crees un objeto, pide ayuda de nuevo para que te diga lo que puedes hacer.`;
+            }
+        } catch (err) {
+            console.log(`Error retrieving user data: ${err}`);
+            speakOutput = `Hubo un error al verificar tus datos. Por favor, intenta nuevamente más tarde.`;
+        }
+
+        return handlerInput.responseBuilder
+            .speak(speakOutput)
+            .reprompt(speakOutput)
+            .getResponse();
+    }
+};
+
+
+
+const CancelAndStopIntentHandler = {
+    canHandle(handlerInput) {
+        return Alexa.getRequestType(handlerInput.requestEnvelope) === 'IntentRequest'
+            && (Alexa.getIntentName(handlerInput.requestEnvelope) === 'AMAZON.CancelIntent'
+                || Alexa.getIntentName(handlerInput.requestEnvelope) === 'AMAZON.StopIntent');
+    },
+    handle(handlerInput) {
+        const speakOutput = '¡Adiós!';
+
+        return handlerInput.responseBuilder
+            .speak(speakOutput)
+            .getResponse();
+    }
+};
+
+const FallbackIntentHandler = {
+    canHandle(handlerInput) {
+        return Alexa.getRequestType(handlerInput.requestEnvelope) === 'IntentRequest'
+            && Alexa.getIntentName(handlerInput.requestEnvelope) === 'AMAZON.FallbackIntent';
+    },
+    handle(handlerInput) {
+        const speakOutput = 'Sorry, I don\'t know about that. Please try again.';
+
+        return handlerInput.responseBuilder
+            .speak(speakOutput)
+            .reprompt(speakOutput)
+            .getResponse();
+    }
+};
+
+const SessionEndedRequestHandler = {
+    canHandle(handlerInput) {
+        return Alexa.getRequestType(handlerInput.requestEnvelope) === 'SessionEndedRequest';
+    },
+    handle(handlerInput) {
+        console.log(`~~~~ Session ended: ${JSON.stringify(handlerInput.requestEnvelope)}`);
+        return handlerInput.responseBuilder.getResponse();
+    }
+};
+
+const IntentReflectorHandler = {
+    canHandle(handlerInput) {
+        return Alexa.getRequestType(handlerInput.requestEnvelope) === 'IntentRequest';
+    },
+    handle(handlerInput) {
+        const intentName = Alexa.getIntentName(handlerInput.requestEnvelope);
+        const speakOutput = `Haz intentado ejecutar ${intentName}`;
+
+        return handlerInput.responseBuilder
+            .speak(speakOutput)
+            .getResponse();
+    }
+};
+
+const ErrorHandler = {
+    canHandle() {
+        return true;
+    },
+    handle(handlerInput, error) {
+        let speakOutput = 'Sorry, I had trouble doing what you asked. Please try again.';
+        if (objectName === '') {
+            speakOutput = 'No registró un objeto. Para registrarlo, diga: el objeto se llama y el nombre del objeto.';
+        }
+
+        console.log(`~~~~ Error handled: ${JSON.stringify(error)}`);
+
+        return handlerInput.responseBuilder 
+            .speak(speakOutput)
+            .reprompt(speakOutput)
+            .getResponse();
+    }
+};
+
+exports.handler = Alexa.SkillBuilders.custom()
+    .addRequestHandlers(
+        LaunchRequestHandler,
+        AddObjectIntentHandler,
+        ListObjectsIntentHandler,
+        SetearModeIntentHandler,
+        SetearHumidityIntentHandler,
+        GetModeSystemIntentHandler,
+        GetLowHumidityStateIntentHandler,
+        GetTankStateIntentHandler,
+        GetSoilStateIntentHandler,
+        PumpStateIntentHandler,
+        WaterObjectIntentHandler,// encender la bomba
+        HelpIntentHandler,
+        CancelAndStopIntentHandler,
+        FallbackIntentHandler,
+        SessionEndedRequestHandler,
+        IntentReflectorHandler)
+    .addErrorHandlers(
+        ErrorHandler
+    )
+    .withCustomUserAgent('sample/hello-world/v1.2')
+    .lambda();
